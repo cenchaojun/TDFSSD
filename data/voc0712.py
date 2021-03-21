@@ -26,11 +26,7 @@ else:
     import xml.etree.ElementTree as ET
 
 VOC_CLASSES = ('__background__',  # always index 0
-               'aeroplane', 'bicycle', 'bird', 'boat',
-               'bottle', 'bus', 'car', 'cat', 'chair',
-               'cow', 'diningtable', 'dog', 'horse',
-               'motorbike', 'person', 'pottedplant',
-               'sheep', 'sofa', 'train', 'tvmonitor')
+               'tassel')
 
 # for making bounding boxes pretty
 COLORS = ((255, 0, 0, 128), (0, 255, 0, 128), (0, 0, 255, 128),
@@ -242,8 +238,8 @@ class VOCDetection(data.Dataset):
         all_boxes[class][image] = [] or np.array of shape #dets x 5
         """
         self._write_voc_results_file(all_boxes)
-        aps, map = self._do_python_eval(output_dir)
-        return aps, map
+        aps, map,rec, prec, ap,Dets,TP,FP,precision_value,recall_value = self._do_python_eval(output_dir)
+        return aps, map,rec, prec, ap,Dets,TP,FP,precision_value,recall_value
 
     def _get_voc_results_file_template(self):
         filename = 'comp4_det_test' + '_{:s}.txt'
@@ -298,7 +294,7 @@ class VOCDetection(data.Dataset):
                 continue
 
             filename = self._get_voc_results_file_template().format(cls)
-            rec, prec, ap = voc_eval(
+            rec, prec, ap,Dets,TP,FP,precision_value,recall_value = voc_eval(
                 filename, annopath, imagesetfile, cls, cachedir, ovthresh=0.5,
                 use_07_metric=use_07_metric)
             aps += [ap]
@@ -320,7 +316,7 @@ class VOCDetection(data.Dataset):
         print('Recompute with `./tools/reval.py --matlab ...` for your paper.')
         print('-- Thanks, The Management')
         print('--------------------------------------------------------------')
-        return aps, np.mean(aps)
+        return aps, np.mean(aps),rec, prec, ap,Dets,TP,FP,precision_value,recall_value
 
 
 def detection_collate(batch):

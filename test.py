@@ -11,7 +11,7 @@ import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
 import matplotlib.pyplot as plt
 
-from data import BaseTransform, VOC_300, VOC_512, COCO_300, COCO_512
+from data import BaseTransform, VOC_300, VOC_512, COCO_300, COCO_512,VOC_short_512
 from data import VOC_CLASSES as labelmap
 #from data import COCO_CLASSES as labelmap
 from layers.functions import Detect, PriorBox
@@ -19,14 +19,14 @@ from utils.timer import Timer
 
 parser = argparse.ArgumentParser(description='Top-Down Feature Fusion Single Shot MultiBox Detector')
 
-parser.add_argument('-v', '--version', default='TDFSSD_vgg',
+parser.add_argument('-v', '--version', default='sssd',
                     help='Sorry only TDFSSD_vgg is supported currently!')
-parser.add_argument('-s', '--size', default='300',
+parser.add_argument('-s', '--size', default='512',
                     help='300 or 512 input size.')
 parser.add_argument('-d', '--dataset', default='VOC',
                     help='VOC or COCO version')
 parser.add_argument('-m', '--trained_model',
-                    default='/home/phd/PycharmProjects/TDFSSD/weights/TDFSSD_vgg_300/TDFSSD_vgg_VOC_epoches_280.pth',
+                    default='/home/cen/PycharmProjects/TDFSSD/weights/sssd_512/0318/sssd_VOC_epoches_146.pth',
                     type=str, help='Trained state_dict file path to open')
 parser.add_argument('--save_folder', default='eval/', type=str,
                     help='Dir to save results')
@@ -40,12 +40,14 @@ if not os.path.exists(args.save_folder):
     os.mkdir(args.save_folder)
 
 if args.dataset == 'VOC':
-    cfg = (VOC_300, VOC_512)[args.size == '512']
+    cfg = (VOC_300, VOC_short_512)[args.size == '512']
 else:
     cfg = (COCO_300, COCO_512)[args.size == '512']
 
 if args.version == 'TDFSSD_vgg':
     from models.TDFSSD_vgg import build_net
+elif args.version == 'sssd':
+    from models.SSSD import build_net
 else:
     print('Unkown version!')
 
@@ -152,7 +154,7 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 if __name__ == '__main__':
     # load net
     img_dim = (300, 512)[args.size == '512']
-    num_classes = (21, 81)[args.dataset == 'COCO']
+    num_classes = (2, 81)[args.dataset == 'COCO']
     net = build_net(img_dim, num_classes)  # initialize detector
     state_dict = torch.load(args.trained_model, map_location=lambda storage, loc: storage)
     # create new OrderedDict that does not contain `module.`
@@ -184,15 +186,17 @@ if __name__ == '__main__':
     object_detector = ObjectDetector(net, detector, transform, num_classes=num_classes, max_per_image=top_k, thresh=0.01)
     colors = plt.cm.hsv(np.linspace(0, 1, num_classes)).tolist()
 
-    directory_name = 'examples/images/ComDPM'
-    for filename in os.listdir(r"./"+directory_name):
+    directory_name = '/home/cen/PycharmProjects/TDFSSD/testdata'
+    for filename in os.listdir(directory_name):
         img = cv2.imread(directory_name + "/" + filename)
-        image = cv2.resize(img, (640, 480))
+        image = cv2.resize(img, (512, 512))
         b, g, r = cv2.split(image)
         img2 = cv2.merge([r, g, b])
-        plt.rcParams['figure.dpi'] = 600
+        plt.rcParams['figure.dpi'] = 512
         plt.imshow(img2)  # expect true color
         currentAxis = plt.gca()
+        # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        image = torch.tensor(image)
         detect_bboxes = object_detector.predict(image)
         for class_id, class_collection in enumerate(detect_bboxes):
             if len(class_collection) > 0:
@@ -205,7 +209,7 @@ if __name__ == '__main__':
                       currentAxis.add_patch(plt.Rectangle(*coords, fill=False, edgecolor=color, linewidth=2))
                       currentAxis.text(int(pt[0]), int(pt[1]), display_txt, bbox={'facecolor': color, 'alpha': 0.5})
         plt.axis('off')
-        plt.savefig('examples/result/ComDPM/'+'/'+filename)
+        plt.savefig('/home/cen/PycharmProjects/TDFSSD/eval'+'/'+filename)
         plt.show()
         plt.close()
 

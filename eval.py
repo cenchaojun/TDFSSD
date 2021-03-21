@@ -20,12 +20,12 @@ parser = argparse.ArgumentParser(description='Receptive Field Block Net')
 
 parser.add_argument('-v', '--version', default='TDFSSD_vgg',
                     help='Sorry only TDFSSD_vgg is supported currently!')
-parser.add_argument('-s', '--size', default='300',
+parser.add_argument('-s', '--size', default='512',
                     help='300 or 512 input size.')
 parser.add_argument('-d', '--dataset', default='VOC',
                     help='VOC or COCO version')
 parser.add_argument('-m', '--trained_model',
-                    default='/home/phd/PycharmProjects/PytorchSSD-master/weights/TDFSSD_vgg_512/TDFSSD_vgg_VOC_epoches_280.pth',
+                    default='/home/cen/PycharmProjects/TDFSSD/weights/TDFSSD_vgg_512/0210/TDFSSD_vgg_VOC_epoches_10.pth',
                     type=str, help='Trained state_dict file path to open')
 parser.add_argument('--save_folder', default='eval/', type=str,
                     help='Dir to save results')
@@ -151,7 +151,7 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 if __name__ == '__main__':
     # load net
     img_dim = (300, 512)[args.size == '512']
-    num_classes = (21, 81)[args.dataset == 'COCO']
+    num_classes = 2
     net = build_net(img_dim, num_classes)  # initialize detector
     state_dict = torch.load(args.trained_model, map_location=lambda storage, loc: storage)
     # create new OrderedDict that does not contain `module.`

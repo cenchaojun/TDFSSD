@@ -180,6 +180,7 @@ def resnet(cfg,in_channel=3):
 
 
 resnet_base = {'resnet': [3, 4, 23, 3]}
+resnet(resnet_base['resnet'], 3)
 
 
 

@@ -1,3 +1,9 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# @Time    : 2021/3/16 下午4:06
+# @Author  : cenchaojun
+# @File    : train_RFB_harDNet.py
+# @Software: PyCharm
 from __future__ import print_function
 
 import argparse
@@ -13,7 +19,7 @@ import torch.optim as optim
 import torch.utils.data as data
 from torch.autograd import Variable
 
-from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, AnnotationTransform, COCODetection, \
+from data import VOCroot, COCOroot, VOC_300, VOC_512,VOC_short_512, COCO_300, COCO_512, AnnotationTransform, COCODetection, \
     VOCDetection, detection_collate, BaseTransform, preproc
 from layers.functions import Detect, PriorBox
 from layers.modules import MultiBoxLoss
@@ -27,23 +33,23 @@ def str2bool(v):
 
 parser = argparse.ArgumentParser(
     description='Receptive Field Block Net Training')
-parser.add_argument('-v', '--version', default='TDFSSD_resnet',
-                    help='Sorry only TDFSSD_resnet is supported currently!')
-parser.add_argument('-s', '--size', default='300',
+parser.add_argument('-v', '--version', default='FSSD_vgg',
+                    help='Sorry only TDFSSD_vgg is supported currently!')
+parser.add_argument('-s', '--size', default='512',
                     help='300 or 512 input size.')
-parser.add_argument('-d', '--dataset', default='VOC',
+parser.add_argument('-d', '--dataset', default='VOC_short',
                     help='VOC or COCO dataset')
 parser.add_argument(
-    '--basenet', default='weights/resnet101_reducedfc.pth', help='pretrained base model')
+    '--basenet', default='weights/vgg16_reducedfc.pth', help='pretrained base model')
 parser.add_argument('--jaccard_threshold', default=0.5,
                     type=float, help='Min Jaccard index for matching')
-parser.add_argument('-b', '--batch_size', default=32,
+parser.add_argument('-b', '--batch_size', default=16,
                     type=int, help='Batch size for training')
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
 parser.add_argument('--cuda', default=True,
                     type=bool, help='Use cuda to train model')
-parser.add_argument('--ngpu', default=2, type=int, help='gpus')
+parser.add_argument('--ngpu', default=1, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate',
                     default=1e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
@@ -52,11 +58,11 @@ parser.add_argument('--resume_net', default=False, help='resume net for retraini
 parser.add_argument('--resume_epoch', default=0,
                     type=int, help='resume iter for retraining')
 
-parser.add_argument('-max', '--max_epoch', default=300,
+parser.add_argument('-max', '--max_epoch', default=150,
                     type=int, help='max epoch for retraining')
 parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
-parser.add_argument('-we', '--warm_epoch', default=1,
+parser.add_argument('-we', '--warm_epoch', default=50,
                     type=int, help='max epoch for retraining')
 parser.add_argument('--gamma', default=0.1,
                     type=float, help='Gamma update for SGD')
@@ -64,11 +70,11 @@ parser.add_argument('--log_iters', default=True,
                     type=bool, help='Print the loss at each iteration')
 parser.add_argument('--save_folder', default='weights/',
                     help='Location to save checkpoint models')
-parser.add_argument('--date', default='0208')
-parser.add_argument('--save_frequency', default=10)
+parser.add_argument('--date', default='0316')
+parser.add_argument('--save_frequency', default=2)
 parser.add_argument('--retest', default=False, type=bool,
                     help='test cache results')
-parser.add_argument('--test_frequency', default=10)
+parser.add_argument('--test_frequency', default=2)
 parser.add_argument('--visdom', default=False, type=str2bool, help='Use visdom to for loss visualization')
 parser.add_argument('--send_images_to_visdom', type=str2bool, default=False,
                     help='Sample a random image from each 10th batch, send it to visdom after augmentations step')
@@ -83,25 +89,34 @@ if not os.path.exists(test_save_dir):
 
 log_file_path = save_folder + '/train' + time.strftime('_%Y-%m-%d-%H-%M', time.localtime(time.time())) + '.log'
 if args.dataset == 'VOC':
-    train_sets = [('2007', 'trainval'), ('2012', 'trainval')]
+    train_sets = [('2007', 'train')]
     cfg = (VOC_300, VOC_512)[args.size == '512']
+elif args.dataset == 'VOC_short':
+    cfg = (VOC_300, VOC_short_512)[args.size == '512']
 else:
     train_sets = [('2017', 'train')]
     cfg = (COCO_300, COCO_512)[args.size == '512']
 
-if args.version == 'TDFSSD_resnet':
-    from models.TDFSSD_resnet import build_net
+if args.version == 'TDFSSD_vgg':
+    from models.TDFSSD_vgg import build_net
+elif args.version == 'SSD_HarDNet68':
+    from models.SSD_HarDNet68 import build_net
+elif args.version == 'RFB_HarDNet68':
+    from models.RFB_HarDNet68 import build_net
+elif args.version == 'FSSD_vgg':
+    from models.FSSD_vgg import build_net
 else:
     print('Unkown version!')
 rgb_std = (1, 1, 1)
-img_dim = 512
-if 'resnet' in args.version:
+img_dim = (300, 512)[args.size == '512']
+if 'vgg' in args.version:
     rgb_means = (104, 117, 123)
 elif 'mobile' in args.version:
     rgb_means = (103.94, 116.78, 123.68)
 
 p = 0.6
-num_classes = (21, 81)[args.dataset == 'COCO']
+num_classes = (2, 81)[args.dataset == 'COCO']
+rgb_means = (104, 117, 123)
 batch_size = args.batch_size
 weight_decay = 0.0005
 gamma = 0.1
@@ -111,7 +126,7 @@ if args.visdom:
 
     viz = visdom.Visdom()
 
-net = build_net(512, num_classes)
+net = build_net(img_dim, num_classes)
 print(net)
 if not args.resume_net:
     base_weights = torch.load(args.basenet)
@@ -139,7 +154,7 @@ if not args.resume_net:
     net.extras.apply(weights_init)
     net.loc.apply(weights_init)
     net.conf.apply(weights_init)
-    if args.version == 'FSSD_vgg' or args.version == 'FRFBSSD_vgg' or args.version == 'TDFSSD_resnet':
+    if args.version == 'FSSD_vgg' or args.version == 'FRFBSSD_vgg' or args.version == 'TDFSSD_vgg':
         net.ft_module.apply(weights_init)
         net.pyramid_ext.apply(weights_init)
     if 'RFB' in args.version:
@@ -147,9 +162,8 @@ if not args.resume_net:
     if args.version == 'RFB_E_vgg' or args.version == 'DenseRFB_vgg':
         net.reduce.apply(weights_init)
         net.up_reduce.apply(weights_init)
-    if args.version == 'DFNet_vgg':
+    if args.version == 'RANet_vgg':
         net.ft_module.apply(weights_init)
-        net.pyramid_ext.apply(weights_init)
 
 else:
     # load resume network
@@ -211,8 +225,8 @@ def train():
     epoch_size = len(train_dataset) // args.batch_size
     max_iter = args.max_epoch * epoch_size
 
-    stepvalues_VOC = (150 * epoch_size, 200 * epoch_size, 250 * epoch_size)
-    stepvalues_COCO = (140 * epoch_size, 160 * epoch_size, 180 * epoch_size)
+    stepvalues_VOC = (150 * epoch_size, 200 * epoch_size, 350 * epoch_size)
+    stepvalues_COCO = (100 * epoch_size, 120 * epoch_size, 140 * epoch_size)
     stepvalues = (stepvalues_VOC, stepvalues_COCO)[args.dataset == 'COCO']
     print('Training', args.version, 'on', train_dataset.name)
     step_index = 0
@@ -262,19 +276,24 @@ def train():
                                                           repr(epoch) + '.pth'))
             if epoch % args.test_frequency == 0 and epoch > 0:
                 net.eval()
-                top_k = (300, 200)[args.dataset == 'COCO']
+                top_k = 300
                 if args.dataset == 'VOC':
-                    APs, mAP = test_net(test_save_dir, net, detector, args.cuda, testset,
-                                        BaseTransform(net.module.size, rgb_means, rgb_std, (2, 0, 1)),
-                                        top_k, thresh=0.01)
+                    APs, mAP,rec, prec, ap,Dets,TP,FP,precision_value,recall_value = test_net(test_save_dir, net, detector, args.cuda, testset,
+                                        BaseTransform(512, rgb_means, rgb_std, (2, 0, 1)),
+                                        top_k, thresh=0.5)
                     APs = [str(num) for num in APs]
                     mAP = str(mAP)
                     log_file.write(str(iteration) + ' APs:\n' + '\n'.join(APs))
                     log_file.write('mAP:\n' + mAP + '\n')
+                    log_file.write('Dets:\n' + Dets + '\n')
+                    log_file.write('TP:\n' + TP + '\n')
+                    log_file.write('FP:\n' + FP + '\n')
+                    log_file.write('precision_value:\n' + precision_value + '\n')
+                    log_file.write('recall_value:\n' + recall_value + '\n')
                 else:
                     test_net(test_save_dir, net, detector, args.cuda, testset,
-                             BaseTransform(net.module.size, rgb_means, rgb_std, (2, 0, 1)),
-                             top_k, thresh=0.01)
+                             BaseTransform(512, rgb_means, rgb_std, (2, 0, 1)),
+                             top_k, thresh=0.5)
 
                 net.train()
             epoch += 1
@@ -310,14 +329,16 @@ def train():
         load_t1 = time.time()
         loc_loss += loss_l.item()
         conf_loss += loss_c.item()
+        # log_file_path = save_folder + '/train' + time.strftime('_%Y-%m-%d-%H-%M', time.localtime(time.time())) + '.log'
+        now_time = time.strftime('_%Y-%m-%d-%H-%M', time.localtime(time.time()))
         if iteration % 10 == 0:
-            print('Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
+            print(repr(now_time) + 'Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
                   + '|| Totel iter ' +
                   repr(iteration) + ' || L: %.4f C: %.4f||' % (
                       mean_loss_l / 10, mean_loss_c / 10) +
                   'Batch time: %.4f sec. ||' % (load_t1 - load_t0) + 'LR: %.8f' % (lr))
             log_file.write(
-                'Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
+                repr(now_time) + 'Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
                 + '|| Totel iter ' +
                 repr(iteration) + ' || L: %.4f C: %.4f||' % (
                     mean_loss_l / 10, mean_loss_c / 10) +
@@ -347,12 +368,12 @@ def adjust_learning_rate(optimizer, gamma, epoch, step_index, iteration, epoch_s
     return lr
 
 
-def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image=300, thresh=0.005):
+def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image=300, thresh=0.5):
     if not os.path.exists(save_folder):
         os.mkdir(save_folder)
     # dump predictions and assoc. ground truth to text file for now
     num_images = len(testset)
-    num_classes = (21, 81)[args.dataset == 'COCO']
+    num_classes = 2
     all_boxes = [[[] for _ in range(num_images)]
                  for _ in range(num_classes)]
 
@@ -402,7 +423,7 @@ def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image
             else:
                 cpu = False
 
-            keep = nms(c_dets, 0.45, force_cpu=cpu)
+            keep = nms(c_dets, 0.3, force_cpu=cpu)
             keep = keep[:50]
             c_dets = c_dets[keep, :]
             all_boxes[j][i] = c_dets
@@ -427,11 +448,17 @@ def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image
 
     print('Evaluating detections')
     if args.dataset == 'VOC':
-        APs, mAP = testset.evaluate_detections(all_boxes, save_folder)
-        return APs, mAP
+        APs, mAP,rec, prec, ap,Dets,TP,FP,precision_value,recall_value = testset.evaluate_detections(all_boxes, save_folder)
+        return APs, mAP,rec, prec, ap,Dets,TP,FP,precision_value,recall_value
     else:
         testset.evaluate_detections(all_boxes, save_folder)
 
 
 if __name__ == '__main__':
+    start_time =time.time()
     train()
+    end_time = time.time()
+    spend_time = str(end_time-start_time)
+    file_name = '{0}_spend_time.csv'.format(args.version)
+    with open(file_name,'a+') as f:
+        f.write(spend_time)

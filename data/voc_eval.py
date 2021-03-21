@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import os
+import pandas as pd
 
 
 def parse_rec(filename):
@@ -18,8 +19,8 @@ def parse_rec(filename):
     for obj in tree.findall('object'):
         obj_struct = {}
         obj_struct['name'] = obj.find('name').text
-        obj_struct['pose'] = obj.find('pose').text
-        obj_struct['truncated'] = int(obj.find('truncated').text)
+        # obj_struct['pose'] = obj.find('pose').text
+        # obj_struct['truncated'] = int(obj.find('truncated').text)
         obj_struct['difficult'] = int(obj.find('difficult').text)
         bbox = obj.find('bndbox')
         obj_struct['bbox'] = [int(bbox.find('xmin').text),
@@ -195,10 +196,26 @@ def voc_eval(detpath,
         # compute precision recall
     fp = np.cumsum(fp)
     tp = np.cumsum(tp)
+    FP = fp[-1]
+    TP = tp[-1]
+    Dets = FP + TP
+    recall_value = TP/npos
+    precision_value = TP/(TP+FP)
+    print("TP: {0}".format(TP))
+    print("FP: {0}".format(FP))
+    print("Dets: {0}".format(FP+TP))
+    print("recall_value: {0}".format(recall_value))
+    print("precision_value: {0}".format(precision_value))
+    record_pd = pd.DataFrame(columns=['recall', 'precision'])
     rec = tp / float(npos)
+    rec_list = rec.tolist()
     # avoid divide by zero in case the first detection matches a difficult
     # ground truth
     prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
+    pre_list = prec.tolist()
+    record_pd['precision'] = pre_list
+    record_pd['recall'] = rec_list
+    # record_pd.to_csv("TDFSSDprecision_recall_curve.csv", index=0)
     ap = voc_ap(rec, prec, use_07_metric)
 
-    return rec, prec, ap
+    return rec, prec, ap, Dets,TP,FP,precision_value,recall_value

@@ -1,11 +1,10 @@
-#Written by Haodong Pan Email:860782934@qq.com
 import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from ptflops import get_model_complexity_info
 
-from models.base_models import resnet, resnet_base
+from models.base_models import vgg, vgg_base
+from ptflops import get_model_complexity_info
 
 
 class BasicConv(nn.Module):
@@ -17,7 +16,7 @@ class BasicConv(nn.Module):
         self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding,
                               dilation=dilation, groups=groups, bias=bias)
         self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
-        self.relu = nn.ReLU() if relu else None
+        self.relu = nn.ReLU(inplace=True) if relu else None
         self.up_size = up_size
         self.up_sample = nn.Upsample(size=(up_size, up_size), mode='bilinear') if up_size != 0 else None
 
@@ -32,36 +31,7 @@ class BasicConv(nn.Module):
         return x
 
 
-class UP(nn.Module):
-    def __init__(self, in_ch, out_ch, bilinear=True, upsize=0, first_step=False):
-        super(UP, self).__init__()
-        self.upsize = upsize
-        if bilinear:
-            self.up = nn.Upsample(size=(upsize, upsize), mode='bilinear')
-        else:
-            if first_step:
-                self.up = nn.ConvTranspose2d(in_channels=in_ch, out_channels=out_ch, kernel_size=3, stride=2, \
-                                             padding=1, output_padding=0)
-            else:
-                self.up = nn.ConvTranspose2d(in_channels=in_ch, out_channels=out_ch, kernel_size=3, stride=2, \
-                                             padding=1, output_padding=1)
-
-        self.fc7_sq = BasicConv(2048, 256, kernel_size=1, padding=0, relu=False)
-        self.conv43_sq = BasicConv(512, 256, kernel_size=1, padding=0, relu=False)
-        self.conv = BasicConv(2 * in_ch, out_ch, 3, padding=1, relu=False)
-
-    def forward(self, x1, x2, num=0):
-        x1 = nn.functional.interpolate(x1, size=(self.upsize, self.upsize), mode='bilinear')
-        if num == 0:
-            x2 = self.fc7_sq(x2)
-        else:
-            x2 = self.conv43_sq(x2)
-        x = torch.cat([x2, x1], dim=1)
-        x = self.conv(x)
-        return x
-
-
-class TDFSSD(nn.Module):
+class FSSD(nn.Module):
     """Single Shot Multibox Architecture
     The network is composed of a base VGG network followed by the
     added multibox conv layers.  Each multibox layer branches into
@@ -78,7 +48,7 @@ class TDFSSD(nn.Module):
     """
 
     def __init__(self, base, extras, ft_module, pyramid_ext, head, num_classes, size):
-        super(TDFSSD, self).__init__()
+        super(FSSD, self).__init__()
         self.num_classes = num_classes
         # TODO: implement __call__ in PriorBox
         self.size = size
@@ -88,11 +58,12 @@ class TDFSSD(nn.Module):
         self.extras = nn.ModuleList(extras)
         self.ft_module = nn.ModuleList(ft_module)
         self.pyramid_ext = nn.ModuleList(pyramid_ext)
-        self.fea_bn = nn.BatchNorm2d(256, affine=True)
+        self.fea_bn = nn.BatchNorm2d(256 * len(self.ft_module), affine=True)
+
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
 
-        self.softmax = nn.Softmax(dim=1)
+        self.softmax = nn.Softmax()
 
     def forward(self, x, test=False):
         """Applies network layers and ops on input image(s) x.
@@ -114,17 +85,18 @@ class TDFSSD(nn.Module):
                     3: priorbox layers, Shape: [2,num_priors*4]
         """
         source_features = list()
+        transformed_features = list()
         loc = list()
         conf = list()
 
-        # apply resnet101 up to conv4_3 relu
-        for k in range(11):
+        # apply vgg up to conv4_3 relu
+        for k in range(23):
             x = self.base[k](x)
 
         source_features.append(x)
 
         # apply vgg up to fc7
-        for k in range(11, len(self.base)):
+        for k in range(23, len(self.base)):
             x = self.base[k](x)
         source_features.append(x)
 
@@ -132,11 +104,10 @@ class TDFSSD(nn.Module):
         for k, v in enumerate(self.extras):
             x = F.relu(v(x), inplace=True)
         source_features.append(x)
-
-        assert len(self.ft_module) == (len(source_features)-1)
-
-        concat_fea = self.ft_module[0](source_features[2], source_features[1], num=0)
-        concat_fea = self.ft_module[1](concat_fea, source_features[0], num=1)
+        assert len(self.ft_module) == len(source_features)
+        for k, v in enumerate(self.ft_module):
+            transformed_features.append(v(source_features[k]))
+        concat_fea = torch.cat(transformed_features, 1)
         x = self.fea_bn(concat_fea)
         pyramid_fea = list()
         for k, v in enumerate(self.pyramid_ext):
@@ -153,7 +124,7 @@ class TDFSSD(nn.Module):
         if test:
             output = (
                 loc.view(loc.size(0), -1, 4),  # loc preds
-                self.softmax(conf.view(-1, self.num_classes)), # conf preds
+                self.softmax(conf.view(-1, self.num_classes)),  # conf preds
             )
         else:
             output = (
@@ -189,29 +160,31 @@ def add_extras(cfg, i, batch_norm=False):
     return layers
 
 
-def feature_transform_module(vgg, extral, size, bilinear):
+def feature_transform_module(vgg, extral, size):
     if size == 300:
-        up_size = [19, 38]
+        up_size = 38
     elif size == 512:
-        up_size = [32, 64]
+        up_size = 64
+
     layers = []
-    # Conv7-2
-    layers += [UP(256, 256, bilinear, up_size[0], first_step=True)]
-    #FC7
-    layers += [UP(256, 256, bilinear, up_size[1], first_step=False)]
+    # conv4_3
+    layers += [BasicConv(vgg[24].out_channels, 256, kernel_size=1, padding=0)]
+    # fc_7
+    layers += [BasicConv(vgg[-2].out_channels, 256, kernel_size=1, padding=0, up_size=up_size)]
+    layers += [BasicConv(extral[-1].out_channels, 256, kernel_size=1, padding=0, up_size=up_size)]
     return vgg, extral, layers
 
 
 def pyramid_feature_extractor(size):
     if size == 300:
-        layers = [BasicConv(256, 512, kernel_size=3, stride=1, padding=1),
+        layers = [BasicConv(256 * 3, 512, kernel_size=3, stride=1, padding=1),
                   BasicConv(512, 512, kernel_size=3, stride=2, padding=1), \
                   BasicConv(512, 256, kernel_size=3, stride=2, padding=1),
                   BasicConv(256, 256, kernel_size=3, stride=2, padding=1), \
                   BasicConv(256, 256, kernel_size=3, stride=1, padding=0),
                   BasicConv(256, 256, kernel_size=3, stride=1, padding=0)]
     elif size == 512:
-        layers = [BasicConv(256, 512, kernel_size=3, stride=1, padding=1),
+        layers = [BasicConv(256 * 3, 512, kernel_size=3, stride=1, padding=1),
                   BasicConv(512, 512, kernel_size=3, stride=2, padding=1), \
                   BasicConv(512, 256, kernel_size=3, stride=2, padding=1),
                   BasicConv(256, 256, kernel_size=3, stride=2, padding=1), \
@@ -241,27 +214,25 @@ mbox = {
 }
 fea_channels = {
     '300': [512, 512, 256, 256, 256, 256],
-    '512': [512, 512, 256, 256, 256, 256, 256]
-}
+    '512': [512, 512, 256, 256, 256, 256, 256]}
 
 
-def build_net(size=300, num_classes=21, bilinear=True):
+def build_net(size=300, num_classes=21):
     if size != 300 and size != 512:
-        print("Error: Sorry only TDFSSD300 and TDFSSD512 is supported currently!")
+        print("Error: Sorry only FSSD300 and FSSD512 is supported currently!")
         return
 
-    return TDFSSD(*feature_transform_module(resnet(resnet_base['resnet'], 3), add_extras(extras[str(size)], 2048),\
-                                            size=size, bilinear=bilinear), pyramid_ext=pyramid_feature_extractor(size),
-                  head=multibox(fea_channels[str(size)], mbox[str(size)], num_classes), num_classes=num_classes,
-                  size=size)
-
+    return FSSD(*feature_transform_module(vgg(vgg_base[str(size)], 3), add_extras(extras[str(size)], 1024), size=size),
+                pyramid_ext=pyramid_feature_extractor(size),
+                head=multibox(fea_channels[str(size)], mbox[str(size)], num_classes), num_classes=num_classes,
+                size=size)
 if __name__ == '__main__':
     import os
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     with torch.no_grad():
         model = build_net(size=512,num_classes=2)
         print(model)
-        x = torch.randn(16, 3, 300, 300)
+        # x = torch.randn(16, 3, 300, 300)
         model.cuda()
         macs,params = get_model_complexity_info(model,(3,512,512),as_strings=True,print_per_layer_stat=True,verbose=True)
         print('MACs: {0}'.format(macs))
