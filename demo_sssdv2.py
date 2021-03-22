@@ -1,11 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Time    : 2021/3/21 下午3:09
-# @Author  : cenchaojun
-# @File    : demo_large_sssd.py
-# @Software: PyCharm
-# 其实主要的过程就是需要将统一的坐标在经过nms处理，之后画在原始图像上，再测一下时间即可
-
 from __future__ import print_function
 import sys
 import os
@@ -24,6 +16,10 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import matplotlib.patches as patches
 from utils.timer import Timer
+import xml.etree.ElementTree as ET
+import os
+import scipy.stats
+
 
 parser = argparse.ArgumentParser(description='Receptive Field Block Net')
 
@@ -42,8 +38,6 @@ parser.add_argument('--save_folder', default='eval', type=str,
                     help='Dir to save results')
 parser.add_argument('-th', '--threshold', default=0.5,
                     type=float, help='Detection confidence threshold value')
-parser.add_argument('-nms_th', '--nms_threshold', default=0.5,
-                    type=float, help='Detection nms threshold value')
 parser.add_argument('-t', '--type', dest='type', default='image', type=str,
                     help='the type of the demo file, could be "image", "video", "camera"')
 parser.add_argument('--cuda', default=True, type=bool,
@@ -51,6 +45,15 @@ parser.add_argument('--cuda', default=True, type=bool,
 parser.add_argument('--cpu', default=True, type=bool,
                     help='Use cpu nms')
 args = parser.parse_args()
+
+# OS check
+# import platform
+#
+# system_os = platform.system()
+# if not system_os == 'Windows':
+#     print('ERROR:: This code is for windows OS')
+#     sys.exit()
+
 # Make result file saving folder
 if not os.path.exists(os.path.join(os.getcwd(), args.save_folder)):
     os.mkdir(os.path.join(os.getcwd(), args.save_folder))
@@ -163,9 +166,29 @@ else:
 # Version checking
 if args.version == 'sssd':
     from models.SSSD import build_net
+# elif args.version == 'RFB_E_vgg':
+#     from models.RFB_Net_E_vgg import build_net
+# elif args.version == 'RFB_mobile':
+#     from models.RFB_Net_mobile import build_net
+#
+#     cfg = mobile_300
+# elif args.version == 'DRFB_mobile':
+#     from models.DRFB_Net_mobile import build_net
+#
+#     cfg = mobile_300
+# elif args.version == 'SSD_vgg':
+#     from models.SSD_vgg import build_net
+#
+#     cfg = (VOC_SSDVGG_300, COCO_SSDVGG_300)[args.dataset == 'COCO']
+# elif args.version == 'SSD_mobile':
+#     from models.SSD_lite_mobilenet_v1 import build_net
+#
+#     cfg = mobile_300
 else:
     print('ERROR::UNKNOWN VERSION')
     sys.exit()
+
+# color number book: http://www.n2n.pe.kr/lev-1/color.htm
 COLORS = [(255, 0, 0), (153, 255, 0), (0, 0, 255), (102, 0, 0)]  # BGR
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -247,39 +270,8 @@ def nms_py(dets, thresh):
                 suppressed[j] = 1
     return keep
 
-def slice_image(net, detector, transform, img, score_threhod,nms_threhold):
-    scale = torch.Tensor([img.shape[1], img.shape[0],
-                          img.shape[1], img.shape[0]])
-    with torch.no_grad():
-        x = transform(img).unsqueeze(0)
-        if args.cuda:
-            x = x.cuda()
-            scale = scale.cuda()
-    out = net(x)  # forward pass
-    boxes, scores = detector.forward(out, priors)
-    boxes = boxes[0]
-    scores = scores[0]
-    boxes *= scale
-    boxes = boxes.cpu().numpy()
-    scores = scores.cpu().numpy()
-    for j in range(1, num_classes):
-        max_ = max(scores[:, j])
-        inds = np.where(scores[:, j] > score_threhod)[0]
-        if inds is None:
-            continue
-        c_bboxes = boxes[inds]
-        c_scores = scores[inds, j]
-        c_dets = np.hstack((c_bboxes, c_scores[:, np.newaxis])).astype(
-            np.float32, copy=False)
-        # keep = nms(c_dets, args.threshold, force_cpu=args.cpu)
-        keep = nms_py(c_dets, nms_threhold)
-        c_dets = c_dets[keep, :]
-        c_bboxes = c_dets[:, :4]
-        total_number = c_bboxes.shape[0]
 
-    return total_number, c_bboxes,c_dets
-
-def demo_img(net, detector, transform, img, save_dir):
+def demo_img(net, detector, transform, img, save_dir,nms_threhold,score_threhold):
     _t = {'inference': Timer(), 'misc': Timer()}
     scale = torch.Tensor([img.shape[1], img.shape[0],
                           img.shape[1], img.shape[0]])
@@ -300,7 +292,7 @@ def demo_img(net, detector, transform, img, save_dir):
     _t['misc'].tic()
     for j in range(1, num_classes):
         max_ = max(scores[:, j])
-        inds = np.where(scores[:, j] > args.threshold)[0]
+        inds = np.where(scores[:, j] > score_threhold)[0]
         if inds is None:
             continue
         c_bboxes = boxes[inds]
@@ -308,7 +300,7 @@ def demo_img(net, detector, transform, img, save_dir):
         c_dets = np.hstack((c_bboxes, c_scores[:, np.newaxis])).astype(
             np.float32, copy=False)
         # keep = nms(c_dets, args.threshold, force_cpu=args.cpu)
-        keep = nms_py(c_dets, args.nms_threshold)
+        keep = nms_py(c_dets, nms_threhold)
         c_dets = c_dets[keep, :]
         c_bboxes = c_dets[:, :4]
         total_number = c_bboxes.shape[0]
@@ -324,36 +316,137 @@ def demo_img(net, detector, transform, img, save_dir):
     status = 't_inf: {:.3f} s || t_misc: {:.3f} s || total: {:d} \r'.format(inference_time, nms_time,c_bboxes.shape[0])
     cv2.putText(img, status[:-2], (10, 40), FONT, 1.2, (0, 0, 0), 5)
     cv2.putText(img, status[:-2], (10, 40), FONT, 1.2, (255, 255, 255), 2)
-    print(status)
+    # print(status)
     cv2.imwrite(save_dir, img)
     return total_number
-def crop_image(src, rownum, colnum, overlap_pix):
-    img = cv2.imread(src)
-    box_list = []
-    w, h = img.size
-    if rownum <= h and colnum <= w:
-        rowheight = h // (rownum - overlap_pix) + 1
-        colwidth = w // (colnum - overlap_pix) + 1
-        for r in range(rowheight - 1):
-            for c in range(colwidth - 1):
-                Lx = (c * colnum) - overlap_pix * c
-                Ly = (r * rownum) - overlap_pix * r
-                if (Lx <= 0):
-                    Lx = 0
-                if (Ly <= 0):
-                    Ly = 0
-                Rx = Lx + colnum
-                Ry = Ly + rownum
-                box = (Lx, Ly, Rx, Ry)
-                box_list.append(box)
-                croped_image = img[Ly:Ry, Lx:Rx]
+    # cv2.imshow('result', img)
+    # cv2.waitKey(0)
+    # cv2.destoryAllWindows()
 
 
+def demo_stream(net, detector, transform, video, save_dir):
+    _t = {'inference': Timer(), 'misc': Timer(), 'total': Timer()}
 
+    index = -1
+    # avgFPS = 0.0
+    while (video.isOpened()):
+        _t['total'].tic()
+        index = index + 1
+
+        flag, img = video.read()
+        # if flag == False: # For fasten loop
+        #    break
+        scale = torch.Tensor([img.shape[1], img.shape[0],
+                              img.shape[1], img.shape[0]])
+        with torch.no_grad():
+            x = transform(img).unsqueeze(0)
+            if args.cuda:
+                x = x.cuda()
+                scale = scale.cuda()
+        _t['inference'].tic()
+        out = net(x)  # forward pass
+        boxes, scores = detector.forward(out, priors)
+        inference_time = _t['inference'].toc()
+        boxes = boxes[0]
+        scores = scores[0]
+        boxes *= scale
+        boxes = boxes.cpu().numpy()
+        scores = scores.cpu().numpy()
+        _t['misc'].tic()
+        for j in range(1, num_classes):
+            max_ = max(scores[:, j])
+            inds = np.where(scores[:, j] > args.threshold)[0]
+            # inds = np.where(scores[:, j] > 0.6)[0] # For higher accuracy
+            if inds is None:
+                continue
+            c_bboxes = boxes[inds]
+            c_scores = scores[inds, j]
+            c_dets = np.hstack((c_bboxes, c_scores[:, np.newaxis])).astype(
+                np.float32, copy=False)
+            # keep = nms(c_dets, args.threshold, force_cpu=False)
+            keep = nms_py(c_dets, args.threshold)
+            c_dets = c_dets[keep, :]
+            c_bboxes = c_dets[:, :4]
+            for bbox in c_bboxes:
+                # Create a Rectangle patch
+                label = labels[j - 1]
+                score = c_dets[0][4]
+                cv2.rectangle(img, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), COLORS[1], 2)
+                cv2.putText(img, '{label}: {score:.2f}'.format(label=label, score=score), (int(bbox[0]), int(bbox[1])),
+                            FONT, 1, COLORS[1], 2)
+        nms_time = _t['misc'].toc()
+        total_time = _t['total'].toc()
+        status = 'f_cnt: {:d} || t_inf: {:.3f} s || t_misc: {:.3f} s || t_tot: {:.3f} s  \r'.format(index,
+                                                                                                    inference_time,
+                                                                                                    nms_time,
+                                                                                                    total_time)
+        cv2.putText(img, status[:-2], (10, 20), FONT, 0.7, (0, 0, 0), 5)
+        cv2.putText(img, status[:-2], (10, 20), FONT, 0.7, (255, 255, 255), 2)
+
+        cv2.imshow('result', img)
+        cv2.waitKey(33)
+
+        cv2.imwrite(os.path.join(save_dir, 'frame_{}.jpg'.format(index)), img)
+        sys.stdout.write(status)
+        sys.stdout.flush()
+def compute_mae(pd, gt):
+    pd, gt = np.array(pd), np.array(gt)
+    # print(gt)
+    # print(pd)
+    diff = pd - gt
+    mae = np.mean(np.abs(diff))
+    return mae
+
+def compute_mse(pd, gt):
+    pd, gt = np.array(pd), np.array(gt)
+    diff = pd - gt
+    mse = np.sqrt(np.mean((diff ** 2)))
+    return mse
+def parse_rec(filename):
+    """ Parse a PASCAL VOC xml file """
+    tree = ET.parse(filename)
+    objects = []
+    count = 0
+    for obj in tree.findall('object'):
+        obj_struct = {}
+        count = count + 1
+        # obj_struct['name'] = obj.find('name').text
+        # obj_struct['pose'] = obj.find('pose').text
+        # obj_struct['truncated'] = int(obj.find('truncated').text)
+        # obj_struct['difficult'] = int(obj.find('difficult').text)
+        # bbox = obj.find('bndbox')
+        # obj_struct['bbox'] = [
+        #     int(bbox.find('xmin').text),
+        #     int(bbox.find('ymin').text),
+        #     int(bbox.find('xmax').text),
+        #     int(bbox.find('ymax').text)
+        # ]
+        # objects.append(obj_struct)
+    return count
+
+def compute_relerr(pd, gt):
+    pd, gt = np.array(pd), np.array(gt)
+    diff = pd - gt
+    diff = diff[gt > 0]
+    gt = gt[gt > 0]
+    if (diff is not None) and (gt is not None):
+        rmae = np.mean(np.abs(diff) / gt) * 100
+        rmse = np.sqrt(np.mean(diff**2 / gt**2)) * 100
+    else:
+        rmae = 0
+        rmse = 0
+    return rmae, rmse
+def rsquared(pd, gt):
+    """ Return R^2 where x and y are array-like."""
+    pd, gt = np.array(pd), np.array(gt)
+    slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(pd, gt)
+    return r_value**2
 
 if __name__ == '__main__':
     # Validity check
     print('Validity check...')
+    # Directory setting
+    print('Directory setting...')
     # Setting network
     print('Network setting...')
     img_dim = (300, 512)[args.size == '512']
@@ -387,92 +480,37 @@ if __name__ == '__main__':
     # Running demo
     print('Running demo...')
     weather_config = ['cloud','overcast','sun','total']
-    overlap_config = [0,102,204,306]
     nms_config = [0.1,0.3,0.5]
     score_config = [0.1,0.3,0.5]
     for weather in weather_config:
-        for overlap_pix in overlap_config:
-            for nms_threhold in nms_config:
-                for score_threhold in score_config:
-                    test_path = '/home/cen/PycharmProjects/TDFSSD/weather/{0}'.format(weather)
-                    result_path = '/home/cen/PycharmProjects/TDFSSD/eval_large/{0}/overlap_{1}/nms_{2}/score_{3}'.format(weather,overlap_pix,nms_threhold,score_threhold)
-                    # result_image_path = os.path.join(result_path,'image')
-                    if not os.path.exists(result_path):
-                        os.makedirs(result_path)
-                    count_path = '/home/cen/PycharmProjects/TDFSSD/count_large'
-                    rownum = 1024
-                    colnum = 1024
-                    for image in os.listdir(test_path):
-                        image_name,_ = image.split('.')
-                        image_file = os.path.join(test_path,image)
-                        result_file = os.path.join(result_path,image)
-                        img = cv2.imread(image_file)
-                        box_list = []
-                        w, h = img.shape[1], img.shape[0]
-                        sum_cbbox = np.zeros([1, 5], dtype='float32')
-                        if rownum <= h and colnum <= w:
-                            rowheight = h // (rownum - overlap_pix) + 1
-                            colwidth = w // (colnum - overlap_pix) + 1
-                            for r in range(rowheight):
-                                for c in range(colwidth):
-                                    Lx = (c * colnum) - overlap_pix * c
-                                    Ly = (r * rownum) - overlap_pix * r
-                                    if (Lx <= 0):
-                                        Lx = 0
-                                    if (Ly <= 0):
-                                        Ly = 0
-                                    Rx = Lx + colnum
-                                    Ry = Ly + rownum
-                                    box = (Lx, Ly, Rx, Ry)
-                                    box_list.append(box)
-                                    croped_image = img[Ly:Ry, Lx:Rx]
-                                    total_number, c_bboxes,c_dets =slice_image(net, detector, transform, croped_image, score_threhold,nms_threhold)
-                                    print(c_dets)
-                                    print("##########################")
-                                    c_dets[:, 0] = c_dets[:, 0] + np.float32(Lx)
-                                    print(c_dets)
-                                    print("##########################")
-                                    c_dets[:, 1] = c_dets[:, 1] + np.float32(Ly)
-                                    print(c_dets)
-                                    print("##########################")
-                                    c_dets[:, 2] = np.float32(Rx) - (np.float32(1024) - c_dets[:, 2])
-                                    print(c_dets)
-                                    print("##########################")
-                                    c_dets[:, 3] = np.float32(Ry) - (np.float32(1024) - c_dets[:, 3])
-                                    print(c_dets)
-                                    print("##########################")
-                                    sum_cbbox = np.concatenate((sum_cbbox,c_dets),axis=0)
-                            print(sum_cbbox.shape)
-                            before_nms_conut = sum_cbbox.shape[0] - 1
-                            keep2 = nms_py(dets=sum_cbbox,thresh=nms_threhold)
-                            print(keep2)
-                            print(len(keep2))
-                            sum_cbbox = sum_cbbox[keep2,:]
-                            after_nms_count = sum_cbbox.shape[0] - 1
-                            print(sum_cbbox.shape)
-                            sum_c_bboxes = sum_cbbox[:, :4]
-                            for bbox in sum_c_bboxes:
-                                label = 'tassel'
-                                cv2.rectangle(img, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), COLORS[1], 2)
-                                cv2.putText(img, '{label}'.format(label=label), (int(bbox[0]), int(bbox[1])),
-                                            FONT, 1, COLORS[1], 2)
-                            cv2.imwrite(result_file, img)
+        for nms_threhold in nms_config:
+            for score_threhold in score_config:
+                test_path = '/home/cen/dataset/1024data/{0}/testdataset/data'.format(weather)
+                result_path = '/home/cen/PycharmProjects/TDFSSD/result_512/weather_{0}/nms_{1}/score_{2}'.format(weather,nms_threhold,score_threhold)
+                gt_path = '/home/cen/dataset/1024data/{0}/testdataset/xml'.format(weather)
+                if not os.path.exists(result_path):
+                    os.makedirs(result_path)
+                gt_list = []
+                pred_list = []
+                for image in os.listdir(test_path):
+                    image_name,_ = image.split('.')
+                    xml_name = image_name + '.xml'
+                    xml_file = os.path.join(gt_path,xml_name)
+                    gt_count = parse_rec(xml_file)
 
+                    image_file = os.path.join(test_path,image)
+                    result_file = os.path.join(result_path,image)
+                    img = cv2.imread(image_file)
+                    number = demo_img(net, detector, transform, img, result_file,nms_threhold,score_threhold)
+                    gt_list.append(gt_count)
+                    pred_list.append(number)
+                mae = str(compute_mae(pd=pred_list, gt=gt_list))
+                mase = str(compute_mse(pd=pred_list, gt=gt_list))
+                rmae_rmse = str(compute_relerr(pd=pred_list, gt=gt_list))
+                r2 = str(rsquared(pd=pred_list, gt=gt_list))
+                config_ = 'weather_{0} nms_{1} score_{2} mae:{3} mase:{4} rmae_rmse:{5} r2:{6}'.format(weather,nms_threhold,score_threhold,mae,mase,rmae_rmse,r2)
+                config_file = 'weather_{0} nms_{1} score_{2}_.txt'.format(weather,nms_threhold,score_threhold)
 
-
-    # print('测试小图像的')
-    # test_path = '/home/cen/PycharmProjects/TDFSSD/testdata'
-    # result_path = '/home/cen/PycharmProjects/TDFSSD/eval'
-    # count_path = '/home/cen/PycharmProjects/TDFSSD/count'
-    # for image in os.listdir(test_path):
-    #     image_name,_ = image.split('.')
-    #     image_file = os.path.join(test_path,image)
-    #     result_file = os.path.join(result_path,image)
-    #     img = cv2.imread(image_file)
-    #     number = demo_img(net, detector, transform, img, result_file)
-    #     count_name = image_name + '.txt'
-    #     count_file = os.path.join(count_path,count_name)
-    #     str_number = str(number)
-    #     with open(count_file,'w') as f:
-    #         f.write(str_number)
-
+                print(config_)
+                with open(config_file,'a') as f:
+                    f.write(config_)

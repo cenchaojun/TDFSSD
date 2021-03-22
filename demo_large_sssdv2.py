@@ -24,6 +24,9 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import matplotlib.patches as patches
 from utils.timer import Timer
+import xml.etree.ElementTree as ET
+import os
+import scipy.stats
 
 parser = argparse.ArgumentParser(description='Receptive Field Block Net')
 
@@ -348,7 +351,58 @@ def crop_image(src, rownum, colnum, overlap_pix):
                 box_list.append(box)
                 croped_image = img[Ly:Ry, Lx:Rx]
 
+def compute_mae(pd, gt):
+    pd, gt = np.array(pd), np.array(gt)
+    # print(gt)
+    # print(pd)
+    diff = pd - gt
+    mae = np.mean(np.abs(diff))
+    return mae
 
+def compute_mse(pd, gt):
+    pd, gt = np.array(pd), np.array(gt)
+    diff = pd - gt
+    mse = np.sqrt(np.mean((diff ** 2)))
+    return mse
+def parse_rec(filename):
+    """ Parse a PASCAL VOC xml file """
+    tree = ET.parse(filename)
+    objects = []
+    count = 0
+    for obj in tree.findall('object'):
+        obj_struct = {}
+        count = count + 1
+        # obj_struct['name'] = obj.find('name').text
+        # obj_struct['pose'] = obj.find('pose').text
+        # obj_struct['truncated'] = int(obj.find('truncated').text)
+        # obj_struct['difficult'] = int(obj.find('difficult').text)
+        # bbox = obj.find('bndbox')
+        # obj_struct['bbox'] = [
+        #     int(bbox.find('xmin').text),
+        #     int(bbox.find('ymin').text),
+        #     int(bbox.find('xmax').text),
+        #     int(bbox.find('ymax').text)
+        # ]
+        # objects.append(obj_struct)
+    return count
+
+def compute_relerr(pd, gt):
+    pd, gt = np.array(pd), np.array(gt)
+    diff = pd - gt
+    diff = diff[gt > 0]
+    gt = gt[gt > 0]
+    if (diff is not None) and (gt is not None):
+        rmae = np.mean(np.abs(diff) / gt) * 100
+        rmse = np.sqrt(np.mean(diff**2 / gt**2)) * 100
+    else:
+        rmae = 0
+        rmse = 0
+    return rmae, rmse
+def rsquared(pd, gt):
+    """ Return R^2 where x and y are array-like."""
+    pd, gt = np.array(pd), np.array(gt)
+    slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(pd, gt)
+    return r_value**2
 
 
 if __name__ == '__main__':
@@ -394,16 +448,22 @@ if __name__ == '__main__':
         for overlap_pix in overlap_config:
             for nms_threhold in nms_config:
                 for score_threhold in score_config:
-                    test_path = '/home/cen/PycharmProjects/TDFSSD/weather/{0}'.format(weather)
+                    test_path = '/home/cen/dataset/origin/{0}/testdataset/data'.format(weather)
                     result_path = '/home/cen/PycharmProjects/TDFSSD/eval_large/{0}/overlap_{1}/nms_{2}/score_{3}'.format(weather,overlap_pix,nms_threhold,score_threhold)
-                    # result_image_path = os.path.join(result_path,'image')
+                    # result_image_path = os.path.join(result_path,'image')'
+                    gt_path = '/home/cen/dataset/origin/{0}/testdataset/xml'.format(weather)
                     if not os.path.exists(result_path):
                         os.makedirs(result_path)
-                    count_path = '/home/cen/PycharmProjects/TDFSSD/count_large'
+                    gt_list = []
+                    pred_list = []
                     rownum = 1024
                     colnum = 1024
                     for image in os.listdir(test_path):
                         image_name,_ = image.split('.')
+                        xml_name = image_name + '.xml'
+                        xml_file = os.path.join(gt_path, xml_name)
+                        gt_count = parse_rec(xml_file)
+
                         image_file = os.path.join(test_path,image)
                         result_file = os.path.join(result_path,image)
                         img = cv2.imread(image_file)
