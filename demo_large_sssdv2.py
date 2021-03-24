@@ -463,6 +463,7 @@ if __name__ == '__main__':
                         xml_name = image_name + '.xml'
                         xml_file = os.path.join(gt_path, xml_name)
                         gt_count = parse_rec(xml_file)
+                        gt_list.append(gt_count)
 
                         image_file = os.path.join(test_path,image)
                         result_file = os.path.join(result_path,image)
@@ -487,36 +488,44 @@ if __name__ == '__main__':
                                     box_list.append(box)
                                     croped_image = img[Ly:Ry, Lx:Rx]
                                     total_number, c_bboxes,c_dets =slice_image(net, detector, transform, croped_image, score_threhold,nms_threhold)
-                                    print(c_dets)
-                                    print("##########################")
                                     c_dets[:, 0] = c_dets[:, 0] + np.float32(Lx)
-                                    print(c_dets)
-                                    print("##########################")
                                     c_dets[:, 1] = c_dets[:, 1] + np.float32(Ly)
-                                    print(c_dets)
-                                    print("##########################")
                                     c_dets[:, 2] = np.float32(Rx) - (np.float32(1024) - c_dets[:, 2])
-                                    print(c_dets)
-                                    print("##########################")
                                     c_dets[:, 3] = np.float32(Ry) - (np.float32(1024) - c_dets[:, 3])
-                                    print(c_dets)
-                                    print("##########################")
                                     sum_cbbox = np.concatenate((sum_cbbox,c_dets),axis=0)
-                            print(sum_cbbox.shape)
                             before_nms_conut = sum_cbbox.shape[0] - 1
                             keep2 = nms_py(dets=sum_cbbox,thresh=nms_threhold)
-                            print(keep2)
-                            print(len(keep2))
                             sum_cbbox = sum_cbbox[keep2,:]
                             after_nms_count = sum_cbbox.shape[0] - 1
-                            print(sum_cbbox.shape)
+                            pred_list.append(after_nms_count)
                             sum_c_bboxes = sum_cbbox[:, :4]
                             for bbox in sum_c_bboxes:
                                 label = 'tassel'
                                 cv2.rectangle(img, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), COLORS[1], 2)
                                 cv2.putText(img, '{label}'.format(label=label), (int(bbox[0]), int(bbox[1])),
                                             FONT, 1, COLORS[1], 2)
+                            status = 'before_nms_conut: {:d}  || after_nms_count: {:d}  \r'.format(before_nms_conut,
+                                                                                                    after_nms_count)
+                            cv2.putText(img, status[:-2], (10, 120), FONT, 5, (0, 0, 0), 7)
+                            cv2.putText(img, status[:-2], (10, 120), FONT, 5, (255, 255, 255), 4)
                             cv2.imwrite(result_file, img)
+                    mae = str(compute_mae(pd=pred_list, gt=gt_list))
+                    mase = str(compute_mse(pd=pred_list, gt=gt_list))
+                    rmae_rmse = str(compute_relerr(pd=pred_list, gt=gt_list))
+                    r2 = str(rsquared(pd=pred_list, gt=gt_list))
+                    config_ = 'larger_weather_{0} overlap_{1} nms_{2} score_{3} mae:{4} mase:{5} rmae_rmse:{6} r2:{7}'.format(weather,overlap_pix,
+                                                                                                           nms_threhold,
+                                                                                                           score_threhold,
+                                                                                                           mae, mase,
+                                                                                                           rmae_rmse,
+                                                                                                           r2)
+                    config_file = 'larger_weather_{0} overlap_{1} nms_{2} score_{3}_.txt'.format(weather, overlap_pix,nms_threhold, score_threhold)
+
+                    print(config_)
+                    with open(config_file, 'a') as f:
+                        f.write(config_)
+
+
 
 
 
